@@ -5,6 +5,19 @@ from openai import OpenAI
 
 app = Flask(__name__)
 
+import os
+from flask import jsonify
+
+@app.get("/debug/env")
+def debug_env():
+    key = os.getenv("OPENAI_API_KEY")
+    return jsonify({
+        "OPENAI_API_KEY_present": bool(key),
+        "OPENAI_API_KEY_length": len(key) if key else 0,
+        "OPENAI_MODEL": os.getenv("OPENAI_MODEL", None)
+    })
+
+
 MODEL = os.getenv("OPENAI_MODEL", "gpt-4o-mini")
 
 @app.get("/")
@@ -62,3 +75,4 @@ Review the following SOP:
             "error": "AI review failed",
             "details": str(e)
         }), 500
+
