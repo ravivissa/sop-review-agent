@@ -10,4 +10,5 @@ COPY . .
 ENV PORT=8080
 EXPOSE 8080
 
-CMD bash -lc "gunicorn app:app --bind 0.0.0.0:${PORT}"
+CMD bash -lc "python -m gunicorn app:app --bind 0.0.0.0:${PORT}"
+
