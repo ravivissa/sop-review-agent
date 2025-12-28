@@ -1,6 +1,7 @@
 from flask import Flask, request, jsonify
 
 app = Flask(__name__)   # <-- THIS LINE MUST EXIST
+print("✅ app.py imported, Flask app object exists:", app)
 
 @app.route("/", methods=["GET"])
 def home():
@@ -20,3 +21,4 @@ def review_sop():
         "dimensions": [],
         "top_3_fixes": []
     })
+
