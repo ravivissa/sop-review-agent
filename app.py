@@ -1,13 +1,16 @@
+# 1️⃣ Imports (TOP of file)
 from flask import Flask, request, jsonify
 
-app = Flask(__name__)   # <-- THIS LINE MUST EXIST
-print("✅ app.py imported, Flask app object exists:", app)
+# 2️⃣ Create Flask app (TOP level – very important)
+app = Flask(__name__)
 
-@app.route("/", methods=["GET"])
+# 3️⃣ Health / home route
+@app.get("/")
 def home():
     return jsonify({"status": "ok", "message": "SOP Review Agent is running"})
 
-@app.route("/review", methods=["POST"])
+# 4️⃣ SOP review endpoint
+@app.post("/review")
 def review_sop():
     data = request.get_json(silent=True) or {}
     sop_text = data.get("sop_text", "")
@@ -22,3 +25,6 @@ def review_sop():
         "top_3_fixes": []
     })
 
+# 5️⃣ (Optional) local run – gunicorn ignores this
+if __name__ == "__main__":
+    app.run()
