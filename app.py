@@ -94,8 +94,18 @@ def review_sop():
             temperature=0.2
         )
 
-        result = json.loads(response.choices[0].message.content)
-        return jsonify(result)
+     result = json.loads(response.choices[0].message.content)
+
+# ---- FIX overall_score deterministically ----
+try:
+    scores = [d.get("score", 0) for d in result.get("dimensions", [])]
+    total = sum(float(s) for s in scores)
+    result["overall_score"] = round((total * 100.0) / 60.0, 0)
+except Exception:
+    pass
+# -------------------------------------------
+
+return jsonify(result)
 
     except Exception as e:
         return jsonify({
@@ -106,3 +116,4 @@ def review_sop():
 
 if __name__ == "__main__":
     app.run(host="0.0.0.0", port=8080)
+
