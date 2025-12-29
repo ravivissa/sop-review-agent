@@ -45,11 +45,16 @@ def review_sop():
     if not sop_text:
         return jsonify({"error": "sop_text is required"}), 400
 
-    api_key = os.getenv("OPENAI_API_KEY")
-    if not api_key:
-        return jsonify({
-            "error": "OPENAI_API_KEY not set in Railway variables"
-        }), 500
+   api_key = (
+    os.getenv("OPENAI_API_KEY")
+    or request.headers.get("X-OPENAI-KEY")
+)
+
+if not api_key:
+    return jsonify({
+        "error": "OpenAI API key missing. Set OPENAI_API_KEY or send X-OPENAI-KEY header."
+    }), 500
+
 
     client = OpenAI(api_key=api_key)
 
@@ -122,3 +127,4 @@ Review the following SOP:
 # -------------------------------------------------
 if __name__ == "__main__":
     app.run(host="0.0.0.0", port=8080)
+
