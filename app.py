@@ -31,7 +31,7 @@ def debug_env():
 
 
 # -------------------------
-# Simple Browser UI
+# Simple Browser UI (NO OpenAI key input for users)
 # -------------------------
 @app.get("/review-ui")
 def review_ui():
@@ -45,7 +45,6 @@ def review_ui():
   <style>
     body { font-family: Arial, sans-serif; max-width: 980px; margin: 32px auto; padding: 0 16px; }
     textarea { width: 100%; font-size: 14px; padding: 12px; }
-    input { width: 100%; font-size: 14px; padding: 10px; }
     button { padding: 10px 14px; font-size: 14px; cursor: pointer; margin-top: 10px; }
     pre { background: #f5f5f5; padding: 14px; overflow: auto; border-radius: 8px; }
     .row { margin: 12px 0; }
@@ -55,15 +54,8 @@ def review_ui():
 <body>
   <h2>SOP Review Agent</h2>
   <p class="hint">
-    Paste SOP text, optionally paste your OpenAI key for testing (header-based).
-    For production, you’ll store the key server-side (once Railway env vars are reliable).
+    Paste SOP text and click Review. Your server securely uses its own OpenAI key.
   </p>
-
-  <div class="row">
-    <label><b>OpenAI API Key (optional for testing)</b></label>
-    <input id="key" type="password" placeholder="sk-... (optional)" />
-    <div class="hint">If empty, app will try OPENAI_API_KEY env var.</div>
-  </div>
 
   <div class="row">
     <label><b>SOP Text</b></label>
@@ -78,19 +70,12 @@ def review_ui():
   <script>
     async function submitReview() {
       const sopText = document.getElementById("sop").value || "";
-      const apiKey = document.getElementById("key").value || "";
-
       document.getElementById("result").textContent = "Running review...";
-
-      const headers = { "Content-Type": "application/json" };
-      if (apiKey.trim().length > 0) {
-        headers["X-OPENAI-KEY"] = apiKey.trim();
-      }
 
       try {
         const res = await fetch("/review", {
           method: "POST",
-          headers,
+          headers: { "Content-Type": "application/json" },
           body: JSON.stringify({ sop_text: sopText })
         });
 
@@ -107,7 +92,7 @@ def review_ui():
 
 
 # -------------------------
-# SOP Review Endpoint
+# SOP Review Endpoint (SERVER uses OPENAI_API_KEY only)
 # -------------------------
 @app.post("/review")
 def review_sop():
@@ -119,13 +104,12 @@ def review_sop():
 
     sop_text = str(sop_text).strip()
 
-    # Priority: header key → env key
-    api_key = request.headers.get("X-OPENAI-KEY") or os.getenv("OPENAI_API_KEY")
-
+    # ✅ Production: server-side key only (users never provide OpenAI keys)
+    api_key = os.getenv("OPENAI_API_KEY")
     if not api_key:
         return jsonify({
-            "error": "OpenAI API key missing. Set OPENAI_API_KEY or send X-OPENAI-KEY header."
-        }), 400
+            "error": "Server configuration error: OPENAI_API_KEY not set"
+        }), 500
 
     model = os.getenv("OPENAI_MODEL", "gpt-4o-mini")
 
