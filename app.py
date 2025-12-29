@@ -3,23 +3,16 @@ import json
 from flask import Flask, request, jsonify
 from openai import OpenAI
 
+# -------------------------------------------------
+# App setup
+# -------------------------------------------------
 app = Flask(__name__)
-
-import os
-from flask import jsonify
-
-@app.get("/debug/env")
-def debug_env():
-    key = os.getenv("OPENAI_API_KEY")
-    return jsonify({
-        "OPENAI_API_KEY_present": bool(key),
-        "OPENAI_API_KEY_length": len(key) if key else 0,
-        "OPENAI_MODEL": os.getenv("OPENAI_MODEL", None)
-    })
-
 
 MODEL = os.getenv("OPENAI_MODEL", "gpt-4o-mini")
 
+# -------------------------------------------------
+# Health check
+# -------------------------------------------------
 @app.get("/")
 def home():
     return jsonify({
@@ -27,6 +20,23 @@ def home():
         "message": "SOP Review Agent is running"
     })
 
+# -------------------------------------------------
+# DEBUG: Environment variable visibility
+# SAFE: does NOT expose key value
+# -------------------------------------------------
+@app.get("/debug/env")
+def debug_env():
+    key = os.getenv("OPENAI_API_KEY")
+    return jsonify({
+        "OPENAI_API_KEY_present": bool(key),
+        "OPENAI_API_KEY_length": len(key) if key else 0,
+        "OPENAI_MODEL": os.getenv("OPENAI_MODEL"),
+        "TEST_RUNTIME": os.getenv("TEST_RUNTIME"),
+    })
+
+# -------------------------------------------------
+# SOP Review endpoint (AI)
+# -------------------------------------------------
 @app.post("/review")
 def review_sop():
     data = request.get_json(silent=True) or {}
@@ -43,9 +53,39 @@ def review_sop():
 
     client = OpenAI(api_key=api_key)
 
-    system_prompt = """You are a senior Quality Assurance and Process Excellence expert.
+    system_prompt = """
+You are a senior Quality Assurance and Process Excellence expert.
 
-Return ONLY valid JSON. Do not add explanations.
+You MUST:
+- Review the SOP conservatively
+- Use only the given text
+- NOT assume missing info
+- NOT claim compliance
+- Return ONLY valid JSON
+- Follow the exact schema
+
+Evaluate using:
+1. Clarity & Readability
+2. Completeness
+3. Compliance Readiness
+4. Risk & Ambiguity
+5. Consistency
+6. Audit Readiness
+
+Return strictly this JSON schema:
+{
+  "overall_score": number,
+  "summary": string,
+  "dimensions": [
+    {
+      "name": string,
+      "score": number,
+      "issues": [string],
+      "suggestions": [string]
+    }
+  ],
+  "top_3_fixes": [string]
+}
 """
 
     user_prompt = f"""
@@ -57,7 +97,7 @@ Review the following SOP:
 """
 
     try:
-        resp = client.chat.completions.create(
+        response = client.chat.completions.create(
             model=MODEL,
             messages=[
                 {"role": "system", "content": system_prompt},
@@ -67,7 +107,7 @@ Review the following SOP:
             temperature=0.2
         )
 
-        result = json.loads(resp.choices[0].message.content)
+        result = json.loads(response.choices[0].message.content)
         return jsonify(result)
 
     except Exception as e:
@@ -76,3 +116,9 @@ Review the following SOP:
             "details": str(e)
         }), 500
 
+
+# -------------------------------------------------
+# Local run (ignored by gunicorn)
+# -------------------------------------------------
+if __name__ == "__main__":
+    app.run(host="0.0.0.0", port=8080)
