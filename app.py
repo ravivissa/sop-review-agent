@@ -1,13 +1,13 @@
+from flask import Flask, request, jsonify
 import os
 import json
-from flask import Flask, request, jsonify
 from openai import OpenAI
 
 app = Flask(__name__)
 
-MODEL = os.getenv("OPENAI_MODEL", "gpt-4o-mini")
-
-
+# -------------------------
+# Health check
+# -------------------------
 @app.get("/")
 def home():
     return jsonify({
@@ -16,6 +16,9 @@ def home():
     })
 
 
+# -------------------------
+# Debug env (safe)
+# -------------------------
 @app.get("/debug/env")
 def debug_env():
     key = os.getenv("OPENAI_API_KEY")
@@ -27,93 +30,84 @@ def debug_env():
     })
 
 
+# -------------------------
+# SOP Review Endpoint
+# -------------------------
 @app.post("/review")
 def review_sop():
     data = request.get_json(silent=True) or {}
-    sop_text = (data.get("sop_text") or "").strip()
+    sop_text = data.get("sop_text")
 
     if not sop_text:
         return jsonify({"error": "sop_text is required"}), 400
 
-    api_key = os.getenv("OPENAI_API_KEY") or request.headers.get("X-OPENAI-KEY")
+    # Priority: header key → env key
+    api_key = request.headers.get("X-OPENAI-KEY") or os.getenv("OPENAI_API_KEY")
 
     if not api_key:
         return jsonify({
             "error": "OpenAI API key missing. Set OPENAI_API_KEY or send X-OPENAI-KEY header."
-        }), 500
-
-    client = OpenAI(api_key=api_key)
-
-    system_prompt = (
-        "You are a senior Quality Assurance and Process Excellence expert.\n\n"
-        "You MUST:\n"
-        "- Review the SOP conservatively\n"
-        "- Use only the given text\n"
-        "- NOT assume missing info\n"
-        "- NOT claim compliance\n"
-        "- Return ONLY valid JSON\n"
-        "- Follow the exact schema\n\n"
-        "Evaluate using:\n"
-        "1. Clarity & Readability\n"
-        "2. Completeness\n"
-        "3. Compliance Readiness\n"
-        "4. Risk & Ambiguity\n"
-        "5. Consistency\n"
-        "6. Audit Readiness\n\n"
-        "Return strictly this JSON schema:\n"
-        "{\n"
-        '  "overall_score": number,\n'
-        '  "summary": string,\n'
-        '  "dimensions": [\n'
-        "    {\n"
-        '      "name": string,\n'
-        '      "score": number,\n'
-        '      "issues": [string],\n'
-        '      "suggestions": [string]\n'
-        "    }\n"
-        "  ],\n"
-        '  "top_3_fixes": [string]\n'
-        "}\n"
-    )
-
-    user_prompt = (
-        "Review the following SOP:\n\n"
-        "<START SOP>\n"
-        f"{sop_text}\n"
-        "<END SOP>\n"
-    )
+        }), 400
 
     try:
+        client = OpenAI(api_key=api_key)
+
+        prompt = f"""
+You are an SOP Quality Auditor.
+
+Score the SOP strictly on 6 dimensions (0–10 each):
+1. Clarity & Readability
+2. Completeness
+3. Compliance Readiness
+4. Risk & Ambiguity
+5. Consistency
+6. Audit Readiness
+
+Rules:
+- Be strict
+- Short SOPs score low
+- Return ONLY valid JSON
+- overall_score will be recalculated by system
+
+SOP:
+\"\"\"{sop_text}\"\"\"
+
+JSON format:
+{{
+  "summary": "...",
+  "dimensions": [
+    {{
+      "name": "Clarity & Readability",
+      "score": 0,
+      "issues": [],
+      "suggestions": []
+    }}
+  ],
+  "top_3_fixes": []
+}}
+"""
+
         response = client.chat.completions.create(
-            model=MODEL,
-            messages=[
-                {"role": "system", "content": system_prompt},
-                {"role": "user", "content": user_prompt}
-            ],
-            response_format={"type": "json_object"},
+            model=os.getenv("OPENAI_MODEL", "gpt-4o-mini"),
+            messages=[{"role": "user", "content": prompt}],
             temperature=0.2
         )
 
-     result = json.loads(response.choices[0].message.content)
+        result = json.loads(response.choices[0].message.content)
 
-# ---- FIX overall_score deterministically ----
-try:
-    scores = [d.get("score", 0) for d in result.get("dimensions", [])]
-    total = sum(float(s) for s in scores)
-    result["overall_score"] = round((total * 100.0) / 60.0, 0)
-except Exception:
-    pass
-# -------------------------------------------
+        # ---- Deterministic overall_score fix ----
+        try:
+            scores = [d.get("score", 0) for d in result.get("dimensions", [])]
+            total = sum(float(s) for s in scores)
+            result["overall_score"] = round((total * 100.0) / 60.0, 0)
+        except Exception:
+            result["overall_score"] = None
+        # ----------------------------------------
 
-return jsonify(result)
+        return jsonify(result)
 
     except Exception as e:
         return jsonify({
             "error": "AI review failed",
             "details": str(e)
         }), 500
-
-
-if __name__ == "__main__":
-    app.run(host="0.0.0.0", port=8080)
-
