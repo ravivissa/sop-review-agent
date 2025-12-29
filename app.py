@@ -3,16 +3,11 @@ import json
 from flask import Flask, request, jsonify
 from openai import OpenAI
 
-# -------------------------------------------------
-# App setup
-# -------------------------------------------------
 app = Flask(__name__)
 
 MODEL = os.getenv("OPENAI_MODEL", "gpt-4o-mini")
 
-# -------------------------------------------------
-# Health check
-# -------------------------------------------------
+
 @app.get("/")
 def home():
     return jsonify({
@@ -20,10 +15,7 @@ def home():
         "message": "SOP Review Agent is running"
     })
 
-# -------------------------------------------------
-# DEBUG: Environment variable visibility
-# SAFE: does NOT expose key value
-# -------------------------------------------------
+
 @app.get("/debug/env")
 def debug_env():
     key = os.getenv("OPENAI_API_KEY")
@@ -31,12 +23,10 @@ def debug_env():
         "OPENAI_API_KEY_present": bool(key),
         "OPENAI_API_KEY_length": len(key) if key else 0,
         "OPENAI_MODEL": os.getenv("OPENAI_MODEL"),
-        "TEST_RUNTIME": os.getenv("TEST_RUNTIME"),
+        "TEST_RUNTIME": os.getenv("TEST_RUNTIME")
     })
 
-# -------------------------------------------------
-# SOP Review endpoint (AI)
-# -------------------------------------------------
+
 @app.post("/review")
 def review_sop():
     data = request.get_json(silent=True) or {}
@@ -45,61 +35,53 @@ def review_sop():
     if not sop_text:
         return jsonify({"error": "sop_text is required"}), 400
 
-   api_key = (
-    os.getenv("OPENAI_API_KEY")
-    or request.headers.get("X-OPENAI-KEY")
-)
+    api_key = os.getenv("OPENAI_API_KEY") or request.headers.get("X-OPENAI-KEY")
 
-if not api_key:
-    return jsonify({
-        "error": "OpenAI API key missing. Set OPENAI_API_KEY or send X-OPENAI-KEY header."
-    }), 500
-
+    if not api_key:
+        return jsonify({
+            "error": "OpenAI API key missing. Set OPENAI_API_KEY or send X-OPENAI-KEY header."
+        }), 500
 
     client = OpenAI(api_key=api_key)
 
-    system_prompt = """
-You are a senior Quality Assurance and Process Excellence expert.
+    system_prompt = (
+        "You are a senior Quality Assurance and Process Excellence expert.\n\n"
+        "You MUST:\n"
+        "- Review the SOP conservatively\n"
+        "- Use only the given text\n"
+        "- NOT assume missing info\n"
+        "- NOT claim compliance\n"
+        "- Return ONLY valid JSON\n"
+        "- Follow the exact schema\n\n"
+        "Evaluate using:\n"
+        "1. Clarity & Readability\n"
+        "2. Completeness\n"
+        "3. Compliance Readiness\n"
+        "4. Risk & Ambiguity\n"
+        "5. Consistency\n"
+        "6. Audit Readiness\n\n"
+        "Return strictly this JSON schema:\n"
+        "{\n"
+        '  "overall_score": number,\n'
+        '  "summary": string,\n'
+        '  "dimensions": [\n'
+        "    {\n"
+        '      "name": string,\n'
+        '      "score": number,\n'
+        '      "issues": [string],\n'
+        '      "suggestions": [string]\n'
+        "    }\n"
+        "  ],\n"
+        '  "top_3_fixes": [string]\n'
+        "}\n"
+    )
 
-You MUST:
-- Review the SOP conservatively
-- Use only the given text
-- NOT assume missing info
-- NOT claim compliance
-- Return ONLY valid JSON
-- Follow the exact schema
-
-Evaluate using:
-1. Clarity & Readability
-2. Completeness
-3. Compliance Readiness
-4. Risk & Ambiguity
-5. Consistency
-6. Audit Readiness
-
-Return strictly this JSON schema:
-{
-  "overall_score": number,
-  "summary": string,
-  "dimensions": [
-    {
-      "name": string,
-      "score": number,
-      "issues": [string],
-      "suggestions": [string]
-    }
-  ],
-  "top_3_fixes": [string]
-}
-"""
-
-    user_prompt = f"""
-Review the following SOP:
-
-<START SOP>
-{sop_text}
-<END SOP>
-"""
+    user_prompt = (
+        "Review the following SOP:\n\n"
+        "<START SOP>\n"
+        f"{sop_text}\n"
+        "<END SOP>\n"
+    )
 
     try:
         response = client.chat.completions.create(
@@ -122,9 +104,5 @@ Review the following SOP:
         }), 500
 
 
-# -------------------------------------------------
-# Local run (ignored by gunicorn)
-# -------------------------------------------------
 if __name__ == "__main__":
     app.run(host="0.0.0.0", port=8080)
-
