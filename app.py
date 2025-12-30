@@ -373,5 +373,73 @@ Return ONLY this JSON format:
         return jsonify({"error": "Upload review failed", "details": str(e)}), 500
 
 
+@app.post("/report-ui")
+def report_ui():
+    data = request.get_json(silent=True) or {}
+    sop_text = data.get("sop_text", "")
+
+    if not sop_text:
+        return "SOP text missing", 400
+
+    # Call internal review logic
+    with app.test_request_context(json={"sop_text": sop_text}):
+        review_response = review_sop()
+        if isinstance(review_response, tuple):
+            return "Review failed", 500
+        result = review_response.get_json()
+
+    overall = result.get("overall_score", 0)
+    summary = result.get("summary", "")
+    dims = result.get("dimensions", [])
+    fixes = result.get("top_3_fixes", [])
+
+    def color(score):
+        if score >= 7: return "green"
+        if score >= 4: return "orange"
+        return "red"
+
+    rows = ""
+    for d in dims:
+        rows += f"""
+        <tr>
+          <td>{d['name']}</td>
+          <td>{d['score']}/10</td>
+          <td style="color:{color(d['score'])}">{color(d['score']).upper()}</td>
+        </tr>
+        """
+
+    fixes_html = "".join(f"<li>{f}</li>" for f in fixes)
+
+    return f"""
+<!doctype html>
+<html>
+<head>
+  <title>SOP Review Report</title>
+  <style>
+    body {{ font-family: Arial; max-width: 900px; margin: auto; padding: 20px; }}
+    table {{ width: 100%; border-collapse: collapse; }}
+    td, th {{ border: 1px solid #ddd; padding: 8px; }}
+    th {{ background: #f2f2f2; }}
+  </style>
+</head>
+<body>
+  <h1>SOP Quality Report</h1>
+  <h2>Overall Score: {overall} / 100</h2>
+  <p><b>Summary:</b> {summary}</p>
+
+  <h3>Dimension Scores</h3>
+  <table>
+    <tr><th>Dimension</th><th>Score</th><th>Status</th></tr>
+    {rows}
+  </table>
+
+  <h3>Top 3 Fixes</h3>
+  <ul>{fixes_html}</ul>
+</body>
+</html>
+"""
+
+
 if __name__ == "__main__":
     app.run(host="0.0.0.0", port=8080)
+
