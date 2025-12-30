@@ -6,21 +6,42 @@ from openai import OpenAI
 app = Flask(__name__)
 
 # -------------------------
+# Helpers
+# -------------------------
+def get_openai_client() -> OpenAI:
+    api_key = os.getenv("OPENAI_API_KEY")
+    if not api_key:
+        raise RuntimeError("OPENAI_API_KEY not set on server")
+    return OpenAI(api_key=api_key)
+
+def compute_overall_score(dimensions):
+    # dimensions: list of {"score": 0-10}
+    try:
+        scores = [float(d.get("score", 0)) for d in dimensions]
+        # normalize 0..60 -> 0..100
+        return round((sum(scores) / 60.0) * 100.0, 0)
+    except Exception:
+        return None
+
+# -------------------------
 # Health check
 # -------------------------
 @app.get("/")
 def home():
-    return jsonify({
-        "status": "ok",
-        "message": "SOP Review Agent is running"
-    })
-
+    return jsonify({"status": "ok", "message": "SOP Review Agent is running"})
 
 # -------------------------
-# Debug env (safe)
+# Protected debug env
 # -------------------------
 @app.get("/debug/env")
 def debug_env():
+    # Protect this endpoint so random users can't probe your server config
+    required = os.getenv("DEBUG_TOKEN")
+    provided = request.headers.get("X-DEBUG-TOKEN")
+
+    if required and provided != required:
+        return jsonify({"error": "Forbidden"}), 403
+
     key = os.getenv("OPENAI_API_KEY")
     return jsonify({
         "OPENAI_API_KEY_present": bool(key),
@@ -29,9 +50,8 @@ def debug_env():
         "TEST_RUNTIME": os.getenv("TEST_RUNTIME")
     })
 
-
 # -------------------------
-# Simple Browser UI (NO OpenAI key input for users)
+# Browser UI (no key input)
 # -------------------------
 @app.get("/review-ui")
 def review_ui():
@@ -54,7 +74,7 @@ def review_ui():
 <body>
   <h2>SOP Review Agent</h2>
   <p class="hint">
-    Paste SOP text and click Review. Your server securely uses its own OpenAI key.
+    Paste SOP text and click Review. The server securely uses its own OpenAI key.
   </p>
 
   <div class="row">
@@ -90,33 +110,20 @@ def review_ui():
 </html>
 """
 
-
 # -------------------------
-# SOP Review Endpoint (SERVER uses OPENAI_API_KEY only)
+# Review endpoint (server key only)
 # -------------------------
 @app.post("/review")
 def review_sop():
     data = request.get_json(silent=True) or {}
-    sop_text = data.get("sop_text")
+    sop_text = (data.get("sop_text") or "").strip()
 
-    if not sop_text or not str(sop_text).strip():
+    if not sop_text:
         return jsonify({"error": "sop_text is required"}), 400
-
-    sop_text = str(sop_text).strip()
-
-    # ✅ Production: server-side key only (users never provide OpenAI keys)
-    api_key = os.getenv("OPENAI_API_KEY")
-    if not api_key:
-        return jsonify({
-            "error": "Server configuration error: OPENAI_API_KEY not set"
-        }), 500
 
     model = os.getenv("OPENAI_MODEL", "gpt-4o-mini")
 
-    try:
-        client = OpenAI(api_key=api_key)
-
-        prompt = f"""
+    prompt = f"""
 You are an SOP Quality Auditor.
 
 Score the SOP strictly on 6 dimensions (0–10 each):
@@ -131,7 +138,6 @@ Rules:
 - Be strict
 - Short SOPs score low
 - Return ONLY valid JSON
-- overall_score will be recalculated by system
 
 SOP:
 \"\"\"{sop_text}\"\"\"
@@ -179,35 +185,28 @@ Return ONLY this JSON format:
   ],
   "top_3_fixes": []
 }}
-"""
+""".strip()
+
+    try:
+        client = get_openai_client()
 
         response = client.chat.completions.create(
             model=model,
             messages=[{"role": "user", "content": prompt}],
             temperature=0.2,
-            response_format={"type": "json_object"}
+            response_format={"type": "json_object"},
         )
 
         result = json.loads(response.choices[0].message.content)
 
-        # ---- Deterministic overall_score fix ----
-        try:
-            scores = [d.get("score", 0) for d in result.get("dimensions", [])]
-            total = sum(float(s) for s in scores)
-            result["overall_score"] = round((total * 100.0) / 60.0, 0)
-        except Exception:
-            result["overall_score"] = None
-        # ----------------------------------------
+        # Ensure overall_score is deterministic & consistent
+        dims = result.get("dimensions", [])
+        result["overall_score"] = compute_overall_score(dims)
 
         return jsonify(result)
 
     except Exception as e:
-        return jsonify({
-            "error": "AI review failed",
-            "details": str(e)
-        }), 500
-
+        return jsonify({"error": "AI review failed", "details": str(e)}), 500
 
 if __name__ == "__main__":
-    # Local runs only. Railway uses gunicorn.
     app.run(host="0.0.0.0", port=8080)
