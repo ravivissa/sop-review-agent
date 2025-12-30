@@ -3,7 +3,22 @@ import os
 import json
 from openai import OpenAI
 
+from werkzeug.utils import secure_filename
+from PyPDF2 import PdfReader
+import docx  # python-docx
+
+
 app = Flask(__name__)
+
+# -------------------------
+# Config
+# -------------------------
+ALLOWED_EXTENSIONS = {"pdf", "docx", "txt"}
+MAX_CHARS_FOR_REVIEW = 18000  # keep it safe for MVP; can increase later
+
+def allowed_file(filename: str) -> bool:
+    return "." in filename and filename.rsplit(".", 1)[1].lower() in ALLOWED_EXTENSIONS
+
 
 # -------------------------
 # Helpers
@@ -15,13 +30,41 @@ def get_openai_client() -> OpenAI:
     return OpenAI(api_key=api_key)
 
 def compute_overall_score(dimensions):
-    # dimensions: list of {"score": 0-10}
     try:
         scores = [float(d.get("score", 0)) for d in dimensions]
-        # normalize 0..60 -> 0..100
         return round((sum(scores) / 60.0) * 100.0, 0)
     except Exception:
         return None
+
+def extract_text_from_pdf(file_stream) -> str:
+    reader = PdfReader(file_stream)
+    parts = []
+    for page in reader.pages:
+        txt = page.extract_text() or ""
+        if txt.strip():
+            parts.append(txt)
+    return "\n\n".join(parts).strip()
+
+def extract_text_from_docx(file_stream) -> str:
+    d = docx.Document(file_stream)
+    paras = [p.text for p in d.paragraphs if p.text and p.text.strip()]
+    return "\n".join(paras).strip()
+
+def extract_text_from_txt(file_stream) -> str:
+    raw = file_stream.read()
+    # best-effort decode
+    try:
+        return raw.decode("utf-8", errors="ignore").strip()
+    except Exception:
+        return str(raw)
+
+def normalize_text(text: str) -> str:
+    text = (text or "").strip()
+    # limit size for MVP
+    if len(text) > MAX_CHARS_FOR_REVIEW:
+        text = text[:MAX_CHARS_FOR_REVIEW] + "\n\n[TRUNCATED FOR MVP]"
+    return text
+
 
 # -------------------------
 # Health check
@@ -30,12 +73,12 @@ def compute_overall_score(dimensions):
 def home():
     return jsonify({"status": "ok", "message": "SOP Review Agent is running"})
 
+
 # -------------------------
 # Protected debug env
 # -------------------------
 @app.get("/debug/env")
 def debug_env():
-    # Protect this endpoint so random users can't probe your server config
     required = os.getenv("DEBUG_TOKEN")
     provided = request.headers.get("X-DEBUG-TOKEN")
 
@@ -50,8 +93,9 @@ def debug_env():
         "TEST_RUNTIME": os.getenv("TEST_RUNTIME")
     })
 
+
 # -------------------------
-# Browser UI (no key input)
+# Existing text UI
 # -------------------------
 @app.get("/review-ui")
 def review_ui():
@@ -69,12 +113,13 @@ def review_ui():
     pre { background: #f5f5f5; padding: 14px; overflow: auto; border-radius: 8px; }
     .row { margin: 12px 0; }
     .hint { color: #555; font-size: 13px; }
+    a { text-decoration: none; }
   </style>
 </head>
 <body>
   <h2>SOP Review Agent</h2>
   <p class="hint">
-    Paste SOP text and click Review. The server securely uses its own OpenAI key.
+    Paste SOP text and click Review. Or use <a href="/upload-ui">Upload UI</a>.
   </p>
 
   <div class="row">
@@ -110,13 +155,75 @@ def review_ui():
 </html>
 """
 
+
 # -------------------------
-# Review endpoint (server key only)
+# NEW Upload UI
+# -------------------------
+@app.get("/upload-ui")
+def upload_ui():
+    return """
+<!doctype html>
+<html>
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width,initial-scale=1" />
+  <title>SOP Upload Review</title>
+  <style>
+    body { font-family: Arial, sans-serif; max-width: 980px; margin: 32px auto; padding: 0 16px; }
+    input, button { font-size: 14px; }
+    button { padding: 10px 14px; cursor: pointer; margin-top: 10px; }
+    pre { background: #f5f5f5; padding: 14px; overflow: auto; border-radius: 8px; }
+    .hint { color: #555; font-size: 13px; }
+    a { text-decoration: none; }
+  </style>
+</head>
+<body>
+  <h2>Upload SOP File</h2>
+  <p class="hint">
+    Upload a .pdf, .docx, or .txt. Or go back to <a href="/review-ui">Text UI</a>.
+  </p>
+
+  <input type="file" id="file" />
+  <br/>
+  <button onclick="uploadAndReview()">Upload & Review</button>
+
+  <h3>Result</h3>
+  <pre id="result">{}</pre>
+
+  <script>
+    async function uploadAndReview() {
+      const fileInput = document.getElementById("file");
+      if (!fileInput.files || fileInput.files.length === 0) {
+        alert("Please select a file first.");
+        return;
+      }
+
+      document.getElementById("result").textContent = "Uploading and reviewing...";
+
+      const formData = new FormData();
+      formData.append("file", fileInput.files[0]);
+
+      try {
+        const res = await fetch("/upload", { method: "POST", body: formData });
+        const data = await res.json();
+        document.getElementById("result").textContent = JSON.stringify(data, null, 2);
+      } catch (err) {
+        document.getElementById("result").textContent = "Error: " + err;
+      }
+    }
+  </script>
+</body>
+</html>
+"""
+
+
+# -------------------------
+# Review Endpoint (server key only)
 # -------------------------
 @app.post("/review")
 def review_sop():
     data = request.get_json(silent=True) or {}
-    sop_text = (data.get("sop_text") or "").strip()
+    sop_text = normalize_text(data.get("sop_text"))
 
     if not sop_text:
         return jsonify({"error": "sop_text is required"}), 400
@@ -146,42 +253,12 @@ Return ONLY this JSON format:
 {{
   "summary": "...",
   "dimensions": [
-    {{
-      "name": "Clarity & Readability",
-      "score": 0,
-      "issues": [],
-      "suggestions": []
-    }},
-    {{
-      "name": "Completeness",
-      "score": 0,
-      "issues": [],
-      "suggestions": []
-    }},
-    {{
-      "name": "Compliance Readiness",
-      "score": 0,
-      "issues": [],
-      "suggestions": []
-    }},
-    {{
-      "name": "Risk & Ambiguity",
-      "score": 0,
-      "issues": [],
-      "suggestions": []
-    }},
-    {{
-      "name": "Consistency",
-      "score": 0,
-      "issues": [],
-      "suggestions": []
-    }},
-    {{
-      "name": "Audit Readiness",
-      "score": 0,
-      "issues": [],
-      "suggestions": []
-    }}
+    {{"name":"Clarity & Readability","score":0,"issues":[],"suggestions":[]}},
+    {{"name":"Completeness","score":0,"issues":[],"suggestions":[]}},
+    {{"name":"Compliance Readiness","score":0,"issues":[],"suggestions":[]}},
+    {{"name":"Risk & Ambiguity","score":0,"issues":[],"suggestions":[]}},
+    {{"name":"Consistency","score":0,"issues":[],"suggestions":[]}},
+    {{"name":"Audit Readiness","score":0,"issues":[],"suggestions":[]}}
   ],
   "top_3_fixes": []
 }}
@@ -198,15 +275,103 @@ Return ONLY this JSON format:
         )
 
         result = json.loads(response.choices[0].message.content)
-
-        # Ensure overall_score is deterministic & consistent
-        dims = result.get("dimensions", [])
-        result["overall_score"] = compute_overall_score(dims)
+        result["overall_score"] = compute_overall_score(result.get("dimensions", []))
 
         return jsonify(result)
 
     except Exception as e:
         return jsonify({"error": "AI review failed", "details": str(e)}), 500
+
+
+# -------------------------
+# NEW Upload Endpoint
+# -------------------------
+@app.post("/upload")
+def upload_and_review():
+    if "file" not in request.files:
+        return jsonify({"error": "No file uploaded"}), 400
+
+    f = request.files["file"]
+    if not f or not f.filename:
+        return jsonify({"error": "No file selected"}), 400
+
+    filename = secure_filename(f.filename)
+    if not allowed_file(filename):
+        return jsonify({"error": "Unsupported file type. Use pdf, docx, txt"}), 400
+
+    ext = filename.rsplit(".", 1)[1].lower()
+
+    try:
+        if ext == "pdf":
+            text = extract_text_from_pdf(f.stream)
+        elif ext == "docx":
+            text = extract_text_from_docx(f.stream)
+        else:
+            text = extract_text_from_txt(f.stream)
+
+        text = normalize_text(text)
+        if not text:
+            return jsonify({"error": "Could not extract any text from the uploaded file"}), 400
+
+        # Reuse the same review logic by calling /review function logic directly
+        # (No HTTP call, just reuse code path)
+        data = {"sop_text": text}
+        # call review function logic by mimicking request: simpler: inline call
+        # We'll just do the same as review_sop with the extracted text:
+
+        model = os.getenv("OPENAI_MODEL", "gpt-4o-mini")
+        prompt = f"""
+You are an SOP Quality Auditor.
+
+Score the SOP strictly on 6 dimensions (0–10 each):
+1. Clarity & Readability
+2. Completeness
+3. Compliance Readiness
+4. Risk & Ambiguity
+5. Consistency
+6. Audit Readiness
+
+Rules:
+- Be strict
+- Short SOPs score low
+- Return ONLY valid JSON
+
+SOP:
+\"\"\"{text}\"\"\"
+
+Return ONLY this JSON format:
+{{
+  "summary": "...",
+  "dimensions": [
+    {{"name":"Clarity & Readability","score":0,"issues":[],"suggestions":[]}},
+    {{"name":"Completeness","score":0,"issues":[],"suggestions":[]}},
+    {{"name":"Compliance Readiness","score":0,"issues":[],"suggestions":[]}},
+    {{"name":"Risk & Ambiguity","score":0,"issues":[],"suggestions":[]}},
+    {{"name":"Consistency","score":0,"issues":[],"suggestions":[]}},
+    {{"name":"Audit Readiness","score":0,"issues":[],"suggestions":[]}}
+  ],
+  "top_3_fixes": []
+}}
+""".strip()
+
+        client = get_openai_client()
+        response = client.chat.completions.create(
+            model=model,
+            messages=[{"role": "user", "content": prompt}],
+            temperature=0.2,
+            response_format={"type": "json_object"},
+        )
+
+        result = json.loads(response.choices[0].message.content)
+        result["overall_score"] = compute_overall_score(result.get("dimensions", []))
+        result["source_file"] = filename
+        result["extracted_chars"] = len(text)
+
+        return jsonify(result)
+
+    except Exception as e:
+        return jsonify({"error": "Upload review failed", "details": str(e)}), 500
+
 
 if __name__ == "__main__":
     app.run(host="0.0.0.0", port=8080)
