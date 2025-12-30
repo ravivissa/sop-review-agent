@@ -131,25 +131,29 @@ def review_ui():
 
   <h3>Result</h3>
   <pre id="result">{}</pre>
+<script>
+  async function submitReview() {
+    const sopText = document.getElementById("sop").value || "";
 
-  <script>
-    async function submitReview() {
-      const sopText = document.getElementById("sop").value || "";
-      document.getElementById("result").textContent = "Running review...";
+    try {
+      const res = await fetch("/report-ui", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ sop_text: sopText })
+      });
 
-      try {
-        const res = await fetch("/review", {
-          method: "POST",
-          headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({ sop_text: sopText })
-        });
+      const html = await res.text();
 
-        const data = await res.json();
-        document.getElementById("result").textContent = JSON.stringify(data, null, 2);
-      } catch (err) {
-        document.getElementById("result").textContent = "Error: " + err;
-      }
+      document.open();
+      document.write(html);
+      document.close();
+
+    } catch (err) {
+      alert("Error generating report: " + err);
     }
+  }
+</script>
+
   </script>
 </body>
 </html>
@@ -442,4 +446,5 @@ def report_ui():
 
 if __name__ == "__main__":
     app.run(host="0.0.0.0", port=8080)
+
 
