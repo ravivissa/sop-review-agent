@@ -69,9 +69,11 @@ def normalize_text(text: str) -> str:
 # -------------------------
 # Health check
 # -------------------------
+from flask import redirect  # add this to your imports at the top
+
 @app.get("/")
 def home():
-    return jsonify({"status": "ok", "message": "SOP Review Agent is running"})
+    return redirect("/review-ui")
 
 
 # -------------------------
@@ -446,5 +448,6 @@ def report_ui():
 
 if __name__ == "__main__":
     app.run(host="0.0.0.0", port=8080)
+
 
 
