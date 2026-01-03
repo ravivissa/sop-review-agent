@@ -79,8 +79,33 @@ def home():
 # -------------------------
 # Protected debug env
 # -------------------------
+from flask import abort  # add to imports at top if not present
+
 @app.get("/debug/env")
 def debug_env():
+    # Secret stored in Railway Variables
+    secret = os.getenv("DEBUG_TOKEN", "")
+
+    # Token can be provided either via query param or header
+    token_qs = request.args.get("token", "")
+    token_hdr = request.headers.get("X-DEBUG-TOKEN", "")
+
+    if not secret:
+        # If you forgot to set DEBUG_TOKEN, don't expose anything
+        return jsonify({"error": "DEBUG_TOKEN not set"}), 500
+
+    if token_qs != secret and token_hdr != secret:
+        return jsonify({"error": "Forbidden"}), 403
+
+    # Safe debug output (do NOT return the key itself)
+    key = os.getenv("OPENAI_API_KEY", "")
+    return jsonify({
+        "OPENAI_API_KEY_present": bool(key),
+        "OPENAI_API_KEY_length": len(key),
+        "OPENAI_MODEL": os.getenv("OPENAI_MODEL"),
+        "TEST_RUNTIME": os.getenv("TEST_RUNTIME"),
+    })
+
     required = os.getenv("DEBUG_TOKEN")
     provided = request.headers.get("X-DEBUG-TOKEN")
 
@@ -478,6 +503,7 @@ def report_ui():
 
 if __name__ == "__main__":
     app.run(host="0.0.0.0", port=8080)
+
 
 
 
