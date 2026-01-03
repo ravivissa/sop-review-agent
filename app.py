@@ -118,13 +118,42 @@ def review_ui():
     a { text-decoration: none; }
   </style>
 </head>
-<body>
-  <h2>SOP Review Agent</h2>
-  <p class="hint">
-    Paste SOP text and click Review. Or use <a href="/upload-ui">Upload UI</a>.
-  </p>
 
-  <div class="row">
+<body>
+  <div style="display:flex; align-items:flex-start; justify-content:space-between; gap:16px; flex-wrap:wrap;">
+    <div>
+      <h2 style="margin:0;">SOP Review Agent</h2>
+      <p class="hint" style="margin-top:8px; max-width:720px;">
+        Paste an SOP (or upload a file) and get a structured audit-style review:
+        scores across 6 dimensions, a short summary, and the top 3 fixes to apply first.
+      </p>
+      <p class="hint" style="margin-top:6px;">
+        ✅ No login needed • 🔒 API key stays on the server • 🧾 Output is easy to share
+      </p>
+
+      <div style="margin-top:10px; display:flex; gap:10px; flex-wrap:wrap;">
+        <a href="/upload-ui" style="display:inline-block; padding:10px 12px; border:1px solid #ddd; border-radius:8px;">
+          Upload SOP (PDF/DOCX/TXT)
+        </a>
+        <a href="#paste" style="display:inline-block; padding:10px 12px; border:1px solid #ddd; border-radius:8px;">
+          Paste SOP Text Below
+        </a>
+      </div>
+    </div>
+
+    <div style="min-width:260px; border:1px solid #eee; border-radius:12px; padding:12px;">
+      <div style="font-size:13px; color:#666; margin-bottom:6px;">Quick Start</div>
+      <ol style="margin:0; padding-left:18px; font-size:13px; color:#333;">
+        <li>Paste SOP text (or upload a file)</li>
+        <li>Click <b>Review SOP</b></li>
+        <li>Copy/share the results</li>
+      </ol>
+    </div>
+  </div>
+
+  <hr style="margin:18px 0; border:none; border-top:1px solid #eee;" />
+
+  <div class="row" id="paste">
     <label><b>SOP Text</b></label>
     <textarea id="sop" rows="10" placeholder="Paste SOP text here..."></textarea>
   </div>
@@ -133,31 +162,32 @@ def review_ui():
 
   <h3>Result</h3>
   <pre id="result">{}</pre>
-<script>
-  async function submitReview() {
-    const sopText = document.getElementById("sop").value || "";
 
-    try {
-      const res = await fetch("/report-ui", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ sop_text: sopText })
-      });
+  <script>
+    async function submitReview() {
+      const sopText = document.getElementById("sop").value || "";
+      document.getElementById("result").textContent = "Running review...";
 
-      const html = await res.text();
+      try {
+        const res = await fetch("/review", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ sop_text: sopText })
+        });
 
-      document.open();
-      document.write(html);
-      document.close();
-
-    } catch (err) {
-      alert("Error generating report: " + err);
+        const data = await res.json();
+        document.getElementById("result").textContent = JSON.stringify(data, null, 2);
+      } catch (err) {
+        document.getElementById("result").textContent = "Error: " + err;
+      }
     }
-  }
-</script>
-
   </script>
+
+  <p class="hint" style="margin-top:14px;">
+    Note: This is an AI-assisted review. For regulated processes, validate results with your compliance/audit team.
+  </p>
 </body>
+
 </html>
 """
 
@@ -448,6 +478,7 @@ def report_ui():
 
 if __name__ == "__main__":
     app.run(host="0.0.0.0", port=8080)
+
 
 
 
